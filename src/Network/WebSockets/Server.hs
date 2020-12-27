@@ -3,6 +3,8 @@
 -- Note that in production you want to use a real webserver such as snap or
 -- warp.
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 module Network.WebSockets.Server
     ( ServerApp
     , runServer
@@ -21,7 +23,8 @@ module Network.WebSockets.Server
 --------------------------------------------------------------------------------
 import           Control.Concurrent            (threadDelay)
 import qualified Control.Concurrent.Async      as Async
-import           Control.Exception             (Exception, allowInterrupt,
+import           Control.Exception             (Exception, Handler(..), SomeException(..),
+                                                allowInterrupt, catches,
                                                 bracket, bracketOnError,
                                                 finally, mask_, throwIO)
 import           Control.Monad                 (forever, void, when)
@@ -38,6 +41,8 @@ import           Network.WebSockets.Http
 import qualified Network.WebSockets.Stream     as Stream
 import           Network.WebSockets.Types
 
+import Debug.Trace
+import Type.Reflection
 
 --------------------------------------------------------------------------------
 -- | WebSockets application that can be ran by a server. Once this 'IO' action
@@ -131,8 +136,16 @@ runServerWithOptions opts app = S.withSocketsDo $
         -- Run the application.
         appAsync  <- Async.asyncWithUnmask $ \unmask ->
             (unmask $ do
-                runApp conn connOpts' app) `finally`
-            (S.close conn)
+                catches (runApp conn connOpts' app)
+                  [ Handler $
+                    \(SomeException (e :: a)) -> do
+                      traceM $ Prelude.concat
+                        [ "Uncaught exception ("
+                        , show $ typeRep @a, "): "
+                        , show e
+                        ]
+                      pure ()]
+             ) `finally` (S.close conn)
 
         -- Install the killer if required.
         when useKiller $ void $ Async.async (killer killRef appAsync)
